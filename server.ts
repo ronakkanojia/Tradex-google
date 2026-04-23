@@ -25,31 +25,18 @@ async function startServer() {
     }
 
     try {
-      // Fetch quote and historical data
-      const [quote, history]: [any, any] = await Promise.all([
-        yahooFinance.quoteSummary(symbol, { modules: ['price'] }),
-        yahooFinance.chart(symbol, {
-          period1: Math.floor(Date.now() / 1000) - 24 * 60 * 60, // Last 24 hours
-          interval: interval as any,
-        }),
-      ]);
+      const marketData = await fetchMarketData(symbol, String(interval));
 
       res.json({
         symbol,
-        price: quote.price?.regularMarketPrice || history.meta.regularMarketPrice,
-        change: quote.price?.regularMarketChange,
-        changePercent: quote.price?.regularMarketChangePercent,
-        history: history.quotes.map(q => ({
-          time: q.date,
-          close: q.close,
-        })),
+        price: marketData.price,
+        change: marketData.change,
+        changePercent: marketData.changePercent,
+        history: marketData.history,
         timestamp: new Date().toISOString(),
       });
     } catch (error: any) {
       console.error(`Error fetching data for ${symbol}:`, error);
-      if (error.name === 'YahooFinanceError' && error.message.includes('429')) {
-        return res.status(429).json({ error: 'Market data provider rate limit exceeded' });
-      }
       res.status(500).json({ error: 'Failed to fetch market data' });
     }
   });
@@ -73,6 +60,83 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Tradex server running on http://localhost:${PORT}`);
   });
+}
+
+async function fetchMarketData(symbol: string, interval: string) {
+  try {
+    return await fetchMarketDataFromYahooApi(symbol, interval);
+  } catch (apiError) {
+    console.warn(`API fetch failed for ${symbol}, falling back to crawler`, apiError);
+    return await crawlMarketDataFromYahooPage(symbol);
+  }
+}
+
+async function fetchMarketDataFromYahooApi(symbol: string, interval: string) {
+  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=${encodeURIComponent(interval)}`;
+
+  const [quoteRes, chartRes] = await Promise.all([
+    fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+    fetch(chartUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+  ]);
+
+  if (!quoteRes.ok || !chartRes.ok) {
+    throw new Error(`Yahoo API failed (${quoteRes.status}/${chartRes.status})`);
+  }
+
+  const quoteJson: any = await quoteRes.json();
+  const chartJson: any = await chartRes.json();
+
+  const quote = quoteJson?.quoteResponse?.result?.[0];
+  const chartResult = chartJson?.chart?.result?.[0];
+  const timestamps: number[] = chartResult?.timestamp || [];
+  const closes: Array<number | null> = chartResult?.indicators?.quote?.[0]?.close || [];
+
+  if (!quote || !quote.regularMarketPrice) {
+    throw new Error('Missing quote data');
+  }
+
+  const history = timestamps
+    .map((ts, i) => ({ time: new Date(ts * 1000).toISOString(), close: closes[i] }))
+    .filter(point => typeof point.close === 'number') as Array<{ time: string; close: number }>;
+
+  return {
+    price: quote.regularMarketPrice,
+    change: quote.regularMarketChange ?? 0,
+    changePercent: quote.regularMarketChangePercent ?? 0,
+    history,
+  };
+}
+
+async function crawlMarketDataFromYahooPage(symbol: string) {
+  const pageUrl = `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`;
+  const response = await fetch(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!response.ok) {
+    throw new Error(`Crawler fetch failed with status ${response.status}`);
+  }
+
+  const html = await response.text();
+  const price = extractNumber(html, /"regularMarketPrice"\s*:\s*\{"raw"\s*:\s*([-\d.]+)/);
+  const change = extractNumber(html, /"regularMarketChange"\s*:\s*\{"raw"\s*:\s*([-\d.]+)/);
+  const changePercent = extractNumber(html, /"regularMarketChangePercent"\s*:\s*\{"raw"\s*:\s*([-\d.]+)/);
+
+  if (price == null) {
+    throw new Error('Crawler could not parse market price');
+  }
+
+  return {
+    price,
+    change: change ?? 0,
+    changePercent: changePercent ?? 0,
+    history: [],
+  };
+}
+
+function extractNumber(source: string, pattern: RegExp): number | null {
+  const match = source.match(pattern);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
 }
 
 startServer();
