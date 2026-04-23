@@ -19,7 +19,7 @@ export function useMarketData(symbol: string, refreshInterval = 10000) {
 
     const fetchData = async () => {
       try {
-        const response = await fetch(`/api/market-data?symbol=${encodeURIComponent(symbol)}`);
+        const response = await fetch(`/api/getMarketData?ticker=${encodeURIComponent(symbol)}`);
         const contentType = response.headers.get('content-type') || '';
         const isJson = contentType.includes('application/json');
 
