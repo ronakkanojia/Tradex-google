@@ -1,0 +1,6 @@
+{
+  "name": "Tradex",
+  "description": "Premium options trading simulator with real-time market data and Black-Scholes math engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
