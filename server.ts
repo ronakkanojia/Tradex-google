@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import YahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -8,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  const yahooFinance = new YahooFinance();
   const app = express();
   const PORT = 3000;
 
@@ -61,78 +63,12 @@ async function startServer() {
 }
 
 async function fetchMarketData(symbol: string, interval: string) {
-  if (symbol === '^NSEI') {
-    return await fetchNifty50FromNse();
-  }
-
   try {
     return await fetchMarketDataFromYahooApi(symbol, interval);
   } catch (apiError) {
     console.warn(`API fetch failed for ${symbol}, falling back to crawler`, apiError);
     return await crawlMarketDataFromYahooPage(symbol);
   }
-}
-
-async function fetchNifty50FromNse() {
-  const baseHeaders = {
-    'User-Agent': 'Mozilla/5.0',
-    Accept: 'application/json,text/plain,*/*',
-    Referer: 'https://www.nseindia.com/index-tracker/NIFTY%2050',
-  };
-
-  // NSE blocks direct API access unless session cookies are established first.
-  const homeRes = await fetch('https://www.nseindia.com', { headers: baseHeaders });
-  const cookie = homeRes.headers.get('set-cookie') || '';
-
-  const dataRes = await fetch('https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050', {
-    headers: {
-      ...baseHeaders,
-      cookie,
-    },
-  });
-
-  if (!dataRes.ok) {
-    throw new Error(`NSE index fetch failed with status ${dataRes.status}`);
-  }
-
-  const dataJson: any = await dataRes.json();
-  const niftyRow = (dataJson?.data || []).find((item: any) => item.symbol === 'NIFTY 50') || dataJson?.data?.[0];
-  if (!niftyRow) {
-    throw new Error('NSE response missing NIFTY 50 data');
-  }
-
-  const price = Number(niftyRow.lastPrice);
-  const change = Number(niftyRow.change);
-  const changePercent = Number(niftyRow.pChange);
-
-  const history: Array<{ time: string; close: number }> = [];
-  try {
-    const chartRes = await fetch('https://www.nseindia.com/api/chart-databyindex?index=NIFTY%2050&indices=true', {
-      headers: {
-        ...baseHeaders,
-        cookie,
-      },
-    });
-
-    if (chartRes.ok) {
-      const chartJson: any = await chartRes.json();
-      const points: any[] = chartJson?.grapthData || chartJson?.graphData || [];
-      for (const point of points) {
-        if (Array.isArray(point) && point.length >= 2) {
-          history.push({ time: new Date(point[0]).toISOString(), close: Number(point[1]) });
-        }
-      }
-    }
-  } catch {
-    // Keep price/change data even if chart data is unavailable.
-  }
-
-  return {
-    price,
-    change,
-    changePercent,
-    history,
-  };
 }
 
 async function fetchMarketDataFromYahooApi(symbol: string, interval: string) {
