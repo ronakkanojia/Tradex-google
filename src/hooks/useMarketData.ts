@@ -19,7 +19,7 @@ export function useMarketData(symbol: string, refreshInterval = 10000) {
 
     const fetchData = async () => {
       try {
-        const response = await fetch(`api/market-data?symbol=${encodeURIComponent(symbol)}`);
+        const response = await fetch(`/api/market-data?symbol=${encodeURIComponent(symbol)}`);
         const contentType = response.headers.get('content-type') || '';
         const isJson = contentType.includes('application/json');
 
@@ -30,9 +30,6 @@ export function useMarketData(symbol: string, refreshInterval = 10000) {
           }
 
           const errText = await response.text();
-          if (errText.includes('NOT_FOUND') || errText.includes('The page could not be found')) {
-            throw new Error('Market data API endpoint was not found. Check your deployment API routing.');
-          }
           throw new Error(errText || 'Failed to fetch data');
         }
 
